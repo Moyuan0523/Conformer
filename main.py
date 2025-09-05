@@ -25,8 +25,8 @@ import models
 
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
-    parser.add_argument('--batch-size', default=64, type=int)
-    parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--batch-size', default=32, type=int)
+    parser.add_argument('--epochs', default=150, type=int)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -125,7 +125,7 @@ def get_args_parser():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
     # Dataset parameters
-    parser.add_argument('--data-path', default='/datasets01_101/imagenet_full_size/061417/', type=str,
+    parser.add_argument('--data-path', default='/home/r76131060/sow/Dataset_7_29/ultrasound_split', type=str,
                         help='dataset path')
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'CIFAR10', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
@@ -136,7 +136,7 @@ def get_args_parser():
     parser.add_argument('--finetune', default='', help='finetune from checkpoint')
 
     parser.add_argument('--evaluate-freq', type=int, default=1, help='frequency of perform evaluation (default: 5)')
-    parser.add_argument('--output_dir', default='',
+    parser.add_argument('--output_dir', default=Path(__file__).parent / "model_result",
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -176,6 +176,7 @@ def main(args):
 
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
+    print(f"using... {args.data_path}\n{args.nb_classes} classes")
 
     if True:  # args.distributed:
         num_tasks = utils.get_world_size()
@@ -222,6 +223,13 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=args.drop_block,
     )
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"\033[92m[模型參數量統計]\033[0m")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Non-trainable parameters: {total_params - trainable_params:,}")
 
     if args.finetune:
         if args.finetune.startswith('https'):
@@ -317,54 +325,80 @@ def main(args):
                 utils._load_checkpoint_for_ema(model_ema, checkpoint['model_ema'])
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, output_dir=output_dir)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
     print("Start training")
     start_time = time.time()
     max_accuracy = 0.0
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 
+        # ----------------- Train -----------------
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
+            set_training_mode=(args.finetune == '')  # finetune 時保持 eval
         )
 
-        lr_scheduler.step(epoch)
-        if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
-            for checkpoint_path in checkpoint_paths:
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'model_ema': get_state_dict(model_ema),
-                    'args': args,
-                }, checkpoint_path)
+        # ----------------- Evaluate (依頻率) -----------------
+        test_stats = None
         if epoch % args.evaluate_freq == 0:
-            test_stats = evaluate(data_loader_val, model, device)
+            test_stats, epoch_result = evaluate(data_loader_val, model, device, output_dir=output_dir)
             print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
             max_accuracy = max(max_accuracy, test_stats["acc1"])
             print(f'Max accuracy: {max_accuracy:.2f}%')
 
-            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                            **{f'test_{k}': v for k, v in test_stats.items()},
-                            'epoch': epoch,
-                            'n_parameters': n_parameters}
+        # ----------------- Scheduler step -----------------
+        if args.sched == 'plateau':
+            # 優先用 val loss；沒有就退回 train loss（確保一定有數值）
+            metric = None
+            if test_stats is not None and 'loss' in test_stats:
+                metric = float(test_stats['loss'])
+            elif 'loss' in train_stats:
+                metric = float(train_stats['loss'])
+            else:
+                # 最後保險：用 -(val acc) 當 metric（若 scheduler 設定 mode='min'，負號能讓「越大越好」→「越小越好」）
+                if test_stats is not None and 'acc1' in test_stats:
+                    metric = float(-test_stats['acc1'])
+            lr_scheduler.step(metric, epoch)   # <-- 關鍵：給 metric
+        else:
+            lr_scheduler.step(epoch)
 
-            if args.output_dir and utils.is_main_process():
-                with (output_dir / "log.txt").open("a") as f:
-                    f.write(json.dumps(log_stats) + "\n")
+        # ----------------- Logging -----------------
+        log_stats = {**{f'train_{k}': f'{v:.4f}' for k, v in train_stats.items()},
+                    **({f'test_{k}': f'{v:.4f}' for k, v in test_stats.items()} if test_stats is not None else {}),
+                    'epoch': epoch,
+                    'n_parameters': n_parameters}
+
+        if args.output_dir and utils.is_main_process():
+            with (output_dir / "log.txt").open("a") as f:
+                f.write(f"[{epoch+1} / 150]\n {epoch_result}\n" + json.dumps(log_stats) + "\n")
+
+        # ----------------- Checkpoint -----------------
+        if args.output_dir:
+            checkpoint = {
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
+                'epoch': epoch,
+                'args': args,
+            }
+            # 只有在啟用 EMA 時才存
+            if model_ema is not None:
+                from timm.utils.model import unwrap_model
+                checkpoint['model_ema'] = unwrap_model(model_ema).state_dict()
+
+            utils.save_on_master(checkpoint, output_dir / 'checkpoint.pth')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
 
 
 if __name__ == '__main__':
