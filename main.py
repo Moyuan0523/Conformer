@@ -342,10 +342,10 @@ def main(args):
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
             args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=(args.finetune == '')  # finetune 時保持 eval
+            set_training_mode=(args.finetune == '') # eval while finetune
         )
 
-        # ----------------- Evaluate (依頻率) -----------------
+        # ----------------- Evaluate (based on freq) -----------------
         test_stats = None
         if epoch % args.evaluate_freq == 0:
             test_stats, epoch_result = evaluate(data_loader_val, model, device, output_dir=output_dir)
@@ -355,17 +355,15 @@ def main(args):
 
         # ----------------- Scheduler step -----------------
         if args.sched == 'plateau':
-            # 優先用 val loss；沒有就退回 train loss（確保一定有數值）
             metric = None
             if test_stats is not None and 'loss' in test_stats:
                 metric = float(test_stats['loss'])
             elif 'loss' in train_stats:
                 metric = float(train_stats['loss'])
             else:
-                # 最後保險：用 -(val acc) 當 metric（若 scheduler 設定 mode='min'，負號能讓「越大越好」→「越小越好」）
                 if test_stats is not None and 'acc1' in test_stats:
                     metric = float(-test_stats['acc1'])
-            lr_scheduler.step(metric, epoch)   # <-- 關鍵：給 metric
+            lr_scheduler.step(metric, epoch)  
         else:
             lr_scheduler.step(epoch)
 
@@ -388,7 +386,6 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
             }
-            # 只有在啟用 EMA 時才存
             if model_ema is not None:
                 from timm.utils.model import unwrap_model
                 checkpoint['model_ema'] = unwrap_model(model_ema).state_dict()
