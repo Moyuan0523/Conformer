@@ -5,6 +5,8 @@ import time
 import torch
 import torch.backends.cudnn as cudnn
 import json
+import copy
+from fvcore.nn import FlopCountAnalysis
 
 from pathlib import Path
 
@@ -157,6 +159,59 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     return parser
+
+def benchmark_model(model, device, input_size=(1, 3, 224, 224), num_runs=100):
+
+    model = model.to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # FLOPs 測試 (用 copy 避免污染原模型)
+    m = copy.deepcopy(model).eval().cpu()
+    dummy_cpu = torch.randn(input_size)
+    flops = float(FlopCountAnalysis(m, dummy_cpu).total())
+
+    # Inference benchmark
+    dummy_input = torch.randn(input_size).to(device)
+    was_training = model.training
+    model.eval()
+    with torch.no_grad():
+        # 預熱
+        for _ in range(10):
+            _ = model(dummy_input)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        start = time.perf_counter()
+
+        for _ in range(num_runs):
+            _ = model(dummy_input)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        end = time.perf_counter()
+
+    if was_training:
+        model.train()
+
+    inference_time = (end - start) / num_runs * 1000.0  # 毫秒
+    throughput = num_runs / (end - start)               # FPS
+
+    report = (
+        f"Details:\n"
+        f"[Parameters]\n"
+        f"  Total parameters: {total_params:,}\n"
+        f"  Trainable parameters: {trainable_params:,}\n"
+        f"  Non-trainable parameters: {total_params - trainable_params:,}\n"
+        f"[Complexity]\n"
+        f"  FLOPs (fvcore) @224x224, bs=1: {flops/1e9:.3f} GFLOPs\n"
+        f"[Efficiency]\n"
+        f"  Inference Time: {inference_time:.2f} ms\n"
+        f"  Throughput: {throughput:.2f} FPS\n"
+    )
+
+    return report
+
 
 
 def main(args):

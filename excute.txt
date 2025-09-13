@@ -1,6 +1,5 @@
 python main.py \
-  --model <你的Conformer模型名> \
-  --data-path /home/r76131060/sow/Dataset_7_29/ultrasound_split \
+  --data-path /home/yan/sow/Dataset_7_29/ultrasound_split \
   --batch-size 32 \
   --epochs 150 \
   --sched cosine \

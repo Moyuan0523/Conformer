@@ -2,7 +2,7 @@ import json
 import re
 import numpy as np
 
-log_file = "/home/r76131060/SOWSOW/vit2/Result/log.txt"
+log_file = "/home/yan/SOWSOW/vit2/Result/log.txt"
 
 # 存放各種指標
 acc_list, f1_list, auc_list, sp_list, recall_list, prec_list = [], [], [], [], [], []
@@ -14,8 +14,8 @@ with open(log_file, "r") as f:
         # 解析 JSON 區塊 (test_acc1)
         try:
             log = json.loads(line)
-            if "test_acc1" in log:
-                acc_list.append(float(log["test_acc1"]))
+            if "test_acc1_head2" in log:
+                acc_list.append(float(log["test_acc1_head2"]))
         except json.JSONDecodeError:
             pass
 
