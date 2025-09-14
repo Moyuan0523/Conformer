@@ -127,7 +127,7 @@ def get_args_parser():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
     # Dataset parameters
-    parser.add_argument('--data-path', default='/home/r76131060/sow/Dataset_7_29/ultrasound_split', type=str,
+    parser.add_argument('--data-path', default='/home/yan/sow/Dataset_7_29/ultrasound_split', type=str,
                         help='dataset path')
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'CIFAR10', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
