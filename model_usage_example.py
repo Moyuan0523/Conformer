@@ -192,17 +192,18 @@ def create_model(args):
 
     # 創建模型實例，並自動加載預訓練權重
     model = ConformerSqueeze(
-        patch_size=16,  # 固定為 16，因為預訓練模型也是使用 16x16 的 patch
-        embed_dim=embed_dim,
-        depth=12,
-        num_heads=num_heads,
+        patch_size=16,        # 保持 16x16 的 patch size
+        embed_dim=embed_dim,  # base: 768, small: 384
+        depth=6,             # 減少到 6，因為我們只使用前 6 個 blocks
+        num_heads=num_heads,  # base: 12, small: 6
         mlp_ratio=4,
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         num_classes=args.num_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
-        pretrained=True
+        pretrained=True,
+        conv_stem=False      # 關閉 conv_stem，使用 SqueezeNet 的 conv1
     )
     return model
 

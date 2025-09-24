@@ -29,19 +29,12 @@ class ConformerSqueeze(nn.Module):
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim
         self.pretrained = pretrained
-
-        # Conv1 Stem
-        if conv_stem:
-            self.conv_stem = nn.Sequential(
-                nn.Conv2d(in_chans, 96, kernel_size=7, stride=2, padding=3, bias=False),
-                nn.BatchNorm2d(96),
-                nn.ReLU(inplace=True),
-            )
-        else:
-            self.conv_stem = nn.Identity()
-
-        # ViT path
-        self.patch_embed = nn.Conv2d(96, embed_dim, kernel_size=patch_size//2, stride=patch_size//2)
+        
+        # SqueezeNet 路徑
+        self.squeeze_net = SqueezeNet(features_only=True)
+        
+        # ViT path - 從 SqueezeNet conv1 輸出開始 (111x111x96)
+        self.vit_proj = nn.Conv2d(96, embed_dim, kernel_size=8, stride=8)  # 14x14xembed_dim
         num_patches = (img_size // patch_size) ** 2
         
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -56,9 +49,6 @@ class ConformerSqueeze(nn.Module):
                 norm_layer=norm_layer)
             for i in range(depth)
         ])
-        
-        # SqueezeNet path
-        self.squeeze_net = SqueezeNet(features_only=True)
         
         # FCUs for feature alignment
         self.fcu1 = FCU(embed_dim, 96)  # For Block 1-2 output
@@ -130,16 +120,13 @@ class ConformerSqueeze(nn.Module):
         
         print("Weight loading process completed.")
 
-    def _get_vit_features(self, x):
-        B, C, H, W = x.shape
+    def _get_vit_features(self, conv1_out, input_H, input_W):
+        B, C, H, W = conv1_out.shape
         if C != 96:
-            raise ValueError(f"Expected input channel size 96, but got {C}")
+            raise ValueError(f"Expected input channel size 96 from conv1, but got {C}")
             
-        # 獲取輸入圖像的尺寸
-        input_H = H  # 應該是 56 (224/4)
-        input_W = W  # 應該是 56
-            
-        x = self.patch_embed(x)
+        # 從 conv1 輸出開始處理
+        x = self.vit_proj(conv1_out)  # 14x14xembed_dim
         x = x.flatten(2).transpose(1, 2)
         
         cls_tokens = self.cls_token.expand(B, -1, -1)
@@ -181,20 +168,24 @@ class ConformerSqueeze(nn.Module):
         return features
 
     def forward(self, x):
-        # Initial convolution
-        x = self.conv_stem(x)
+        # 從輸入取得尺寸
+        B, C, input_H, input_W = x.shape
         
-        # Get ViT features
-        vit_features = self._get_vit_features(x)
+        # 首先通過 SqueezeNet 的 conv1 層
+        conv1_out = self.squeeze_net.conv1(x)
+        conv1_out = self.squeeze_net.relu1(conv1_out)  # 111x111x96
         
-        # SqueezeNet path with feature fusion at each stage
+        # 獲取 ViT 特徵
+        vit_features = self._get_vit_features(conv1_out, input_H, input_W)
+        
+        # SqueezeNet 路徑處理
         squeeze_features = self.squeeze_net(x, vit_features=vit_features, return_features=True)
         
-        # Multi-scale fusion
+        # 多尺度融合 (27x27, 13x13, 13x13)
         x = torch.cat([
-            squeeze_features['pool3'],  # Already fused with block3_4
-            squeeze_features['pool5'],  # Already fused with block5_6
-            squeeze_features['fire9']
+            squeeze_features['pool3'],  # 27x27
+            squeeze_features['pool5'],  # 13x13 (會被自動上重采樣)
+            squeeze_features['fire9']   # 13x13
         ], dim=1)
         x = self.fusion(x)
         
