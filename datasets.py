@@ -4,8 +4,31 @@ import json
 from torchvision import datasets, transforms
 from torchvision.datasets.folder import ImageFolder, default_loader
 
-from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.data import create_transform
+# ImageNet 標準化參數
+IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
+
+def create_transform(input_size=224, is_training=True, color_jitter=0.4,
+                    auto_augment=None, interpolation='bicubic',
+                    re_prob=0.25, re_mode='pixel', re_count=1):
+    """創建轉換函數"""
+    if is_training:
+        transform = transforms.Compose([
+            transforms.RandomResizedCrop(input_size, scale=(0.08, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN,
+                              std=IMAGENET_DEFAULT_STD)
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.Resize(int(input_size/0.875)),
+            transforms.CenterCrop(input_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN,
+                              std=IMAGENET_DEFAULT_STD)
+        ])
+    return transform
 
 
 class INatDataset(ImageFolder):

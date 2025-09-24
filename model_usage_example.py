@@ -11,6 +11,7 @@ from PIL import Image
 import numpy as np
 import logging
 from datetime import datetime
+from fvcore.nn import FlopCountAnalysis
 
 from conformer_squeeze import ConformerSqueeze
 from datasets import build_dataset
@@ -116,7 +117,7 @@ def get_args_parser():
     parser.set_defaults(model_ema=False)    # 預設為 False
     
     # 數據集參數
-    parser.add_argument('--data-path', default='/home/yan/sow/Dataset_7_29/ultrasound_split', type=str,
+    parser.add_argument('--data-path', default=((Path(__file__).resolve().parent).parent) / "sow" / "Dataset_7_29" / "ultrasound_split", type=str,
                         help='dataset path')
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'CIFAR10', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
@@ -239,9 +240,15 @@ def benchmark_model(model, device, input_size=(1, 3, 224, 224), num_runs=100):
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     # FLOPs 測試 (用 copy 避免污染原模型)
-    m = copy.deepcopy(model).eval().cpu()
-    dummy_cpu = torch.randn(input_size)
-    flops = float(FlopCountAnalysis(m, dummy_cpu).total())
+    flops = 0
+    try:
+        m = copy.deepcopy(model).eval().cpu()
+        dummy_cpu = torch.randn(input_size)
+        flops = float(FlopCountAnalysis(m, dummy_cpu).total())
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to compute FLOPs: {str(e)}. Skipping FLOPs calculation.")
+        flops = -1  # 標記為無法計算
 
     # Inference benchmark
     dummy_input = torch.randn(input_size).to(device)

@@ -135,6 +135,10 @@ class ConformerSqueeze(nn.Module):
         if C != 96:
             raise ValueError(f"Expected input channel size 96, but got {C}")
             
+        # 獲取輸入圖像的尺寸
+        input_H = H  # 應該是 56 (224/4)
+        input_W = W  # 應該是 56
+            
         x = self.patch_embed(x)
         x = x.flatten(2).transpose(1, 2)
         
@@ -147,11 +151,32 @@ class ConformerSqueeze(nn.Module):
         for i, block in enumerate(self.blocks):
             x = block(x)
             if i == 1:  # After block 2
+                # 使用 FCU 進行特徵轉換，期望輸出尺寸為 56x56
                 features['block1_2'] = self.fcu1(x[:, 1:])
+                
             elif i == 3:  # After block 4
+                # 使用 FCU 進行特徵轉換，期望輸出尺寸為 28x28
                 features['block3_4'] = self.fcu2(x[:, 1:])
+                # 添加尺寸檢查
+                if features['block3_4'].shape[2:] != (input_H//2, input_W//2):
+                    features['block3_4'] = torch.nn.functional.interpolate(
+                        features['block3_4'], 
+                        size=(input_H//2, input_W//2),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                
             elif i == 5:  # After block 6
+                # 使用 FCU 進行特徵轉換，期望輸出尺寸為 14x14
                 features['block5_6'] = self.fcu3(x[:, 1:])
+                # 添加尺寸檢查
+                if features['block5_6'].shape[2:] != (input_H//4, input_W//4):
+                    features['block5_6'] = torch.nn.functional.interpolate(
+                        features['block5_6'], 
+                        size=(input_H//4, input_W//4),
+                        mode='bilinear',
+                        align_corners=False
+                    )
         
         return features
 

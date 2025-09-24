@@ -1,5 +1,8 @@
 import torch
 import torch.nn as nn
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Fire(nn.Module):
     def __init__(self, inplanes, squeeze_planes, expand1x1_planes, expand3x3_planes):
@@ -67,7 +70,16 @@ class SqueezeNet(nn.Module):
             if vit_features['block1_2'].shape[1] != 96:
                 raise ValueError(f"Expected block1_2 channel size 96, but got {vit_features['block1_2'].shape[1]}")
             
-            pool1 = pool1 + vit_features['block1_2']
+            # 確保特徵圖尺寸匹配
+            vit_feat = vit_features['block1_2']
+            if vit_feat.shape[2:] != pool1.shape[2:]:
+                logger.info(f"Resizing VIT features from {vit_feat.shape[2:]} to {pool1.shape[2:]}")
+                vit_feat = torch.nn.functional.interpolate(vit_feat, 
+                                                         size=pool1.shape[2:],
+                                                         mode='bilinear', 
+                                                         align_corners=False)
+            
+            pool1 = pool1 + vit_feat
         
         # First fire group
         fire2 = self.fire2(pool1)
@@ -128,4 +140,10 @@ class FCU(nn.Module):
         x = self.conv(x)
         x = self.norm(x)
         x = self.activation(x)
+        
+        # 確保特徵圖尺寸正確
+        target_size = 56  # first stage
+        if H != target_size:
+            x = torch.nn.functional.interpolate(x, size=(target_size, target_size), 
+                                               mode='bilinear', align_corners=False)
         return x
