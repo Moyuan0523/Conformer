@@ -3,14 +3,19 @@ import torch.nn as nn
 from functools import partial
 from conformer import Conformer, Block
 from squeeze_modules import SqueezeNet, FCU
+from transformers import ViTModel
+import torchvision.models as models
+from collections import OrderedDict
 
 class ConformerSqueeze(nn.Module):
     def __init__(self, num_classes=1000, img_size=224, patch_size=16, in_chans=3, embed_dim=768,
-                 depth=12, num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0.,
-                 attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, conv_stem=True):
+                 depth=6, num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0.,
+                 attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, conv_stem=True,
+                 pretrained=True):
         super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim
+        self.pretrained = pretrained
 
         # Conv1 Stem
         if conv_stem:
@@ -57,6 +62,42 @@ class ConformerSqueeze(nn.Module):
         # Final layers
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.head = nn.Linear(512, num_classes)
+
+        # Load pretrained weights if specified
+        if pretrained:
+            self._load_pretrained_weights()
+
+    def _load_pretrained_weights(self):
+        # Load pretrained ViT weights from Hugging Face
+        vit_model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+        
+        # Only load the first 6 transformer blocks
+        for i in range(min(6, len(self.blocks))):
+            # Load transformer block weights
+            self.blocks[i].load_state_dict(vit_model.encoder.layer[i].state_dict(), strict=False)
+            
+        # Load position embeddings and cls token
+        self.pos_embed.data = vit_model.embeddings.position_embeddings
+        self.cls_token.data = vit_model.embeddings.cls_token
+        
+        # Load pretrained SqueezeNet weights from torchvision
+        squeezenet = models.squeezenet1_0(pretrained=True)
+        
+        # Create a state dict for our modified SqueezeNet
+        squeeze_state_dict = OrderedDict()
+        
+        # Map the pretrained weights to our modified architecture
+        squeeze_state_dict.update({
+            'fire2.squeeze.weight': squeezenet.features[2].squeeze.weight,
+            'fire2.expand1x1.weight': squeezenet.features[2].expand1x1.weight,
+            'fire2.expand3x3.weight': squeezenet.features[2].expand3x3.weight,
+            # ... 添加其他 fire 模塊的權重映射
+        })
+        
+        # Load the mapped weights to our SqueezeNet
+        self.squeeze_net.load_state_dict(squeeze_state_dict, strict=False)
+        
+        print("Pretrained weights loaded successfully!")
 
     def _get_vit_features(self, x):
         B, C, H, W = x.shape
