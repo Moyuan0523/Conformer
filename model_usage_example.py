@@ -9,6 +9,8 @@ import copy
 from pathlib import Path
 from PIL import Image
 import numpy as np
+import logging
+from datetime import datetime
 
 from conformer_squeeze import ConformerSqueeze
 from datasets import build_dataset
@@ -171,6 +173,10 @@ def get_args_parser():
                         help='Perform evaluation only')
     parser.add_argument('--seed', default=0, type=int,
                         help='random seed')
+    parser.add_argument('--output-dir', type=str, default='./runs',
+                        help='path where to save logs and checkpoints')
+    parser.add_argument('--experiment-name', type=str, default=None,
+                        help='experiment name for logging')
 
     return parser
 
@@ -280,9 +286,32 @@ def benchmark_model(model, device, input_size=(1, 3, 224, 224), num_runs=100):
 
 
 def main(args):
+    # 設置日誌
+    if not args.experiment_name:
+        args.experiment_name = f'conformer_{args.model_type}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+    
+    log_dir = Path(args.output_dir) / args.experiment_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 配置日誌
+    log_file = log_dir / 'training.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger(__name__)
+    
+    # 記錄實驗配置
+    logger.info(f"{'='*50}\nExperiment: {args.experiment_name}\n{'='*50}")
+    logger.info(f"Arguments:\n{args}\n{'-'*50}")
+    
     # 設置設備
     device = torch.device(args.device)
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
 
     # 固定隨機種子
     seed = args.seed
@@ -293,13 +322,13 @@ def main(args):
     # 加載數據集
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
-    print(f"Using dataset from {args.data_path}\n{args.nb_classes} classes")
+    logger.info(f"Using dataset from {args.data_path}\n{args.nb_classes} classes")
 
     # 設置 mixup 和 loss function
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
-        print("Mixup is activated!")
+        logger.info("Mixup is activated!")
         mixup_fn = Mixup(
             mixup_alpha=args.mixup,
             cutmix_alpha=args.cutmix,
@@ -411,7 +440,7 @@ def main(args):
                 optimizer.step()
 
                 if batch_idx % 20 == 0:
-                    print(f'Train Epoch: {epoch} [{batch_idx * len(images)}/{len(data_loader_train.dataset)} '
+                    logger.info(f'Train Epoch: {epoch} [{batch_idx * len(images)}/{len(data_loader_train.dataset)} '
                           f'({100. * batch_idx / len(data_loader_train):.0f}%)]\tLoss: {loss.item():.6f}')
             
             # 更新學習率
@@ -435,8 +464,13 @@ def main(args):
 
             val_loss /= len(data_loader_val)
             accuracy = 100. * correct / len(data_loader_val.dataset)
-            print(f'Validation set: Average loss: {val_loss:.4f}, '
+            logger.info(f'Validation set: Average loss: {val_loss:.4f}, '
                   f'Accuracy: {correct}/{len(data_loader_val.dataset)} ({accuracy:.2f}%)\n')
+            
+            # 保存每個 epoch 的指標
+            metrics_file = log_dir / 'metrics.txt'
+            with open(metrics_file, 'a') as f:
+                f.write(f'Epoch {epoch}: loss={val_loss:.4f}, accuracy={accuracy:.2f}%\n')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('ConformerSqueeze evaluation script', parents=[get_args_parser()])
