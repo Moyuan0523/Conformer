@@ -3,9 +3,22 @@ import torch.nn as nn
 from functools import partial
 from conformer import Conformer, Block
 from squeeze_modules import SqueezeNet, FCU
-from transformers import ViTModel
-import torchvision.models as models
 from collections import OrderedDict
+
+# 加載預訓練模型的導入
+try:
+    from transformers import ViTModel
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    print("Warning: transformers package not found. ViT pretrained weights will not be available.")
+    TRANSFORMERS_AVAILABLE = False
+
+try:
+    import torchvision.models as models
+    TORCHVISION_AVAILABLE = True
+except ImportError:
+    print("Warning: torchvision not found. SqueezeNet pretrained weights will not be available.")
+    TORCHVISION_AVAILABLE = False
 
 class ConformerSqueeze(nn.Module):
     def __init__(self, num_classes=1000, img_size=224, patch_size=16, in_chans=3, embed_dim=768,
@@ -68,36 +81,54 @@ class ConformerSqueeze(nn.Module):
             self._load_pretrained_weights()
 
     def _load_pretrained_weights(self):
-        # Load pretrained ViT weights from Hugging Face
-        vit_model = ViTModel.from_pretrained('google/vit-base-patch16-224')
-        
-        # Only load the first 6 transformer blocks
-        for i in range(min(6, len(self.blocks))):
-            # Load transformer block weights
-            self.blocks[i].load_state_dict(vit_model.encoder.layer[i].state_dict(), strict=False)
+        try:
+            # 嘗試加載 ViT 預訓練權重
+            print("Loading ViT pretrained weights...")
+            try:
+                vit_model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+                
+                # Only load the first 6 transformer blocks
+                for i in range(min(6, len(self.blocks))):
+                    self.blocks[i].load_state_dict(vit_model.encoder.layer[i].state_dict(), strict=False)
+                    
+                # Load position embeddings and cls token
+                self.pos_embed.data = vit_model.embeddings.position_embeddings
+                self.cls_token.data = vit_model.embeddings.cls_token
+                print("ViT weights loaded successfully!")
+            except Exception as e:
+                print(f"Warning: Could not load ViT weights: {str(e)}")
+                print("Initializing ViT weights randomly")
             
-        # Load position embeddings and cls token
-        self.pos_embed.data = vit_model.embeddings.position_embeddings
-        self.cls_token.data = vit_model.embeddings.cls_token
+            # 嘗試加載 SqueezeNet 預訓練權重
+            print("Loading SqueezeNet pretrained weights...")
+            try:
+                squeezenet = models.squeezenet1_0(pretrained=True)
+                
+                # Create a state dict for our modified SqueezeNet
+                squeeze_state_dict = OrderedDict()
+                
+                # Map the pretrained weights to our modified architecture
+                for i in range(2, 10):  # fire2 to fire9
+                    layer_name = f'fire{i}'
+                    if hasattr(self.squeeze_net, layer_name):
+                        squeeze_state_dict.update({
+                            f'{layer_name}.squeeze.weight': getattr(squeezenet.features[i], 'squeeze').weight,
+                            f'{layer_name}.expand1x1.weight': getattr(squeezenet.features[i], 'expand1x1').weight,
+                            f'{layer_name}.expand3x3.weight': getattr(squeezenet.features[i], 'expand3x3').weight,
+                        })
+                
+                # Load the mapped weights
+                self.squeeze_net.load_state_dict(squeeze_state_dict, strict=False)
+                print("SqueezeNet weights loaded successfully!")
+            except Exception as e:
+                print(f"Warning: Could not load SqueezeNet weights: {str(e)}")
+                print("Initializing SqueezeNet weights randomly")
+                
+        except Exception as e:
+            print(f"Warning: Error during weight loading: {str(e)}")
+            print("Model will be used with random initialization")
         
-        # Load pretrained SqueezeNet weights from torchvision
-        squeezenet = models.squeezenet1_0(pretrained=True)
-        
-        # Create a state dict for our modified SqueezeNet
-        squeeze_state_dict = OrderedDict()
-        
-        # Map the pretrained weights to our modified architecture
-        squeeze_state_dict.update({
-            'fire2.squeeze.weight': squeezenet.features[2].squeeze.weight,
-            'fire2.expand1x1.weight': squeezenet.features[2].expand1x1.weight,
-            'fire2.expand3x3.weight': squeezenet.features[2].expand3x3.weight,
-            # ... 添加其他 fire 模塊的權重映射
-        })
-        
-        # Load the mapped weights to our SqueezeNet
-        self.squeeze_net.load_state_dict(squeeze_state_dict, strict=False)
-        
-        print("Pretrained weights loaded successfully!")
+        print("Weight loading process completed.")
 
     def _get_vit_features(self, x):
         B, C, H, W = x.shape
