@@ -3,11 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
 
-from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.helpers import load_pretrained
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from timm.models.resnet import resnet26d, resnet50d, resnet26, resnet50
-from timm.models.registry import register_model
+from layers import DropPath, trunc_normal_
+
+# ImageNet 默認值
+IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
+
+def to_2tuple(x):
+    if isinstance(x, tuple):
+        return x
+    return (x, x)
+
+def register_model(fn):
+    return fn
 
 import logging
 _logger = logging.getLogger(__name__)

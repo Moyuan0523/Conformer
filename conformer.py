@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
 
-from timm.models.layers import DropPath, trunc_normal_
+from layers import DropPath, trunc_normal_
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
