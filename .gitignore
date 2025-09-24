@@ -2,3 +2,5 @@
 *.pt
 model_result/
 checkpoints/
+model_result/
+
