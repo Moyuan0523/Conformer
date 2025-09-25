@@ -181,11 +181,19 @@ class ConformerSqueeze(nn.Module):
         # SqueezeNet 路徑處理
         squeeze_features = self.squeeze_net(x, vit_features=vit_features, return_features=True)
         
-        # 多尺度融合 (27x27, 13x13, 13x13)
-        x = torch.cat([
+        # 將 pool3 下采樣到 13x13
+        pool3_down = torch.nn.functional.interpolate(
             squeeze_features['pool3'],  # 27x27
-            squeeze_features['pool5'],  # 13x13 (會被自動上重采樣)
-            squeeze_features['fire9']   # 13x13
+            size=squeeze_features['pool5'].shape[2:],  # 13x13
+            mode='bilinear',
+            align_corners=False
+        )
+        
+        # MSA (全部在 13x13)
+        x = torch.cat([
+            pool3_down,                  # 13x13
+            squeeze_features['pool5'],   # 13x13
+            squeeze_features['fire9']    # 13x13
         ], dim=1)
         x = self.fusion(x)
         
