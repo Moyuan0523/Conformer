@@ -55,9 +55,9 @@ class ConformerSqueeze(nn.Module):
         self.fcu2 = FCU(embed_dim, 256)  # For Block 3-4 output
         self.fcu3 = FCU(embed_dim, 512)  # For Block 5-6 output
         
-        # Multi-scale fusion
+        # Multi-scale fusion (256 + 512 + 512 = 1280 channels)
         self.fusion = nn.Sequential(
-            nn.Conv2d(1024, 512, 1),
+            nn.Conv2d(1280, 512, 1),
             nn.BatchNorm2d(512),
             nn.ReLU(inplace=True)
         )
