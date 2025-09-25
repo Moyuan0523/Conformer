@@ -16,3 +16,5 @@ python main.py \
   --smoothing 0.0 \
   --no-model-ema \
   --device cuda
+
+python model_usage_example.py   --batch-size 32   --epochs 150  --experiment-name conformer_base_test_1  --sched cosine   --warmup-epochs 0   --cooldown-epochs 0   --min-lr 0   --opt adam  --lr 1e-4   --opt-betas 0.9 0.999  --opt-eps 1e-8 --weight-decay 0.0 --mixup 0 --cutmix 0 --smoothing 0.0 --no-model-ema --device cuda

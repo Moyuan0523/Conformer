@@ -24,7 +24,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
+    total_batches = len(data_loader)
+    header = f'Epoch: [{epoch}]'
     print_freq = 10
 
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):

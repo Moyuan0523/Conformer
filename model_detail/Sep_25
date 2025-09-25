@@ -1,0 +1,12 @@
+Squeezeformer
+
+Details:
+[Parameters]
+  Total parameters: 49,970,120
+  Trainable parameters: 49,970,120
+  Non-trainable parameters: 0
+[Complexity]
+  FLOPs (fvcore) @224x224, bs=1: 10.907 GFLOPs
+[Efficiency]
+  Inference Time: 9.36 ms
+  Throughput: 106.81 FPS

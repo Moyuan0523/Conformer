@@ -8,6 +8,7 @@ import os
 import time
 from collections import defaultdict, deque
 import datetime
+from tqdm import tqdm
 
 import torch
 import torch.distributed as dist
@@ -110,46 +111,50 @@ class MetricLogger(object):
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
-    def log_every(self, iterable, print_freq, header=None):
-        i = 0
+    def log_every(self, iterable, print_freq, header=None, total_batches=None):
         if not header:
             header = ''
+        
+        # 計算總 batch 數和總樣本數
+        if total_batches is None:
+            total_batches = len(iterable)
+        
+        # 獲取單個 batch 的樣本數
+        batch_size = next(iter(iterable))[0].shape[0]
+        total_samples = total_batches * batch_size
+        
+        # 初始化 tqdm
+        pbar = tqdm(iterable,
+                   desc=header,
+                   total=total_batches,
+                   dynamic_ncols=True,  # 自動調整寬度
+                   unit='batch')
+        
+        # 初始化計時器
         start_time = time.time()
         end = time.time()
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
-        space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
-        log_msg = [
-            header,
-            '[{0' + space_fmt + '}/{1}]',
-            'eta: {eta}',
-            '{meters}',
-            'time: {time}',
-            'data: {data}'
-        ]
         if torch.cuda.is_available():
             log_msg.append('max mem: {memory:.0f}')
         log_msg = self.delimiter.join(log_msg)
         MB = 1024.0 * 1024.0
-        for obj in iterable:
+        for obj in pbar:
             data_time.update(time.time() - end)
             yield obj
             iter_time.update(time.time() - end)
-            if i % print_freq == 0 or i == len(iterable) - 1:
-                eta_seconds = iter_time.global_avg * (len(iterable) - i)
-                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if torch.cuda.is_available():
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time),
-                        memory=torch.cuda.max_memory_allocated() / MB))
-                else:
-                    print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
-                        meters=str(self),
-                        time=str(iter_time), data=str(data_time)))
-            i += 1
+            
+            # 更新 tqdm 顯示的信息
+            postfix = {
+                'loss': self.meters['loss'].global_avg if 'loss' in self.meters else 0.0,
+                'lr': self.meters['lr'].value if 'lr' in self.meters else 0.0,
+                'time/batch': f'{iter_time.avg:.3f}s',
+            }
+            
+            if torch.cuda.is_available():
+                postfix['mem'] = f'{torch.cuda.max_memory_allocated() / MB:.0f}MB'
+            
+            pbar.set_postfix(postfix)
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
